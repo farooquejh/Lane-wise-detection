@@ -3,6 +3,7 @@ import numpy as np
 from ultralytics import YOLO
 import json
 import os
+import time
 
 # Global variables for ROI selection
 lanes = {"lane1": [], "lane2": [], "lane3": []}
@@ -70,7 +71,7 @@ def load_saved_lanes():
                             lanes[lane_name] = [tuple(point) for point in points]
                             complete[lane_name] = True
                     
-                    print(f"✅ Loaded lane ROIs from: {json_path}")
+                    print(f" Loaded lane ROIs from: {json_path}")
                     return True
         except (json.JSONDecodeError, KeyError) as e:
             print(f"Error loading saved lanes: {e}")
@@ -88,7 +89,7 @@ def select_lane_rois_from_first_frame(video_path):
         for lane, points in lanes.items():
             if len(points) >= 3:
                 lane_polygons[lane] = np.array(points, dtype=np.int32)
-        print("✅ Loaded saved lanes. Skipping ROI drawing.")
+        print(" Loaded saved lanes. Skipping ROI drawing.")
         return lane_polygons
 
     # If no valid saved lanes, start drawing
@@ -96,7 +97,7 @@ def select_lane_rois_from_first_frame(video_path):
     ret, frame = cap.read()
     cap.release()
     if not ret:
-        print("❌ Failed to read first frame.")
+        print(" Failed to read first frame.")
         return None
 
     original_image = frame.copy()
@@ -141,7 +142,7 @@ def select_lane_rois_from_first_frame(video_path):
 
     with open("saved_lanes.json", "w") as f:
         json.dump({"lanes": lane_data_for_json}, f, indent=4)
-    print("✅ Lane ROIs saved to saved_lanes.json")
+  
 
     return lane_polygons
 
@@ -164,6 +165,10 @@ def detect_and_count_video(video_path, output_path, lane_polygons, model_path='y
 
     frame_count = 0
     last_processed_frame = None
+    print_interval = 10  # Print every 10 seconds
+    last_print_time = time.time()
+    interval_lane_counts = {lane: 0 for lane in lane_polygons}
+    
 
     while True:
         ret, frame = cap.read()
@@ -171,6 +176,7 @@ def detect_and_count_video(video_path, output_path, lane_polygons, model_path='y
             break
 
         frame_count += 1
+        current_time = time.time()
 
         if frame_count % process_every == 0:
             lane_counts = {lane: 0 for lane in lane_polygons}
@@ -191,12 +197,16 @@ def detect_and_count_video(video_path, output_path, lane_polygons, model_path='y
                         lane_counts[lane] += 1
                         conf = float(box.conf[0])
                         cls_id = int(box.cls[0])
+                        if cls_id not in [2,3,5,7]:
+                            continue
+                        interval_lane_counts[lane] += 1
                         label = f"{model.names[cls_id]} {conf:.2f}"
+                        
 
                         cv2.rectangle(processed_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                         cv2.putText(processed_frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
                         break
-
+            
             # Display lane counts
             for lane, poly in lane_polygons.items():
                 M = cv2.moments(poly)
@@ -205,7 +215,17 @@ def detect_and_count_video(video_path, output_path, lane_polygons, model_path='y
                     cy = int(M["m01"] / M["m00"])
                     cv2.putText(processed_frame, f"{lane}: {lane_counts[lane]}", (cx, cy),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            
+            if current_time - last_print_time >= print_interval:
+                # Print only the lane counts in dictionary format
+                print(" Count in every10second",interval_lane_counts)
+                
+                # Reset interval counters
+                interval_lane_counts = {lane: 0 for lane in lane_polygons}
+                last_print_time = current_time
+                print("Counts reset at:", time.strftime("%H:%M:%S"),interval_lane_counts)
+            #print(lane_counts)
+            # for lane ,count in lane_counts.items():
+            #     print(lane,"xx",count)
             last_processed_frame = processed_frame
             cv2.imshow("Detection", processed_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -217,12 +237,12 @@ def detect_and_count_video(video_path, output_path, lane_polygons, model_path='y
     cap.release()
     # out.release()
     cv2.destroyAllWindows()
-    print(f"✅ Video saved: {output_path}")
+   
 
 if __name__ == "__main__":
-    video_path = "video.dav"
+    video_path = "4.mp4"
     output_path = "output.mp4"
-    model_path = "yolov8n.pt"
+    model_path = "yolov8n_openvino_model/"
     process_every = 5
 
     lane_polygons = select_lane_rois_from_first_frame(video_path)
